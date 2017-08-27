@@ -41,23 +41,10 @@ public class ChannelHandler {
         this.pair = pair;
         this.proxy = proxy;
         this.marketName = marketName;
-        
-        if (!marketName.equals(BittrexWS.toBittrexMarket(pair))) {
-            LOG.warn("Bittrex wrong pair-handler mapping3!!! marketName: " + marketName + ", pair: " + pair);
-            this.state = WebsocketChannelState.ERROR;
-            throw new BittrexException(true, "Bittrex wrong pair-handler mapping3!!! marketName: " + marketName + ", pair: " + pair);
-        }
-        
     }
     
     protected void fetchState() {
         SignalRFuture<QueryExchangeState> state = proxy.invoke(QueryExchangeState.class, "QueryExchangeState", marketName);
-        //state.done(v -> {
-        //    processSnapShot(v);
-        //});
-        //state.onError(err -> {
-        //    this.state = WebsocketChannelState.ERROR;
-        //});
         
         try {
             QueryExchangeState queryExchangeState = state.get(10, TimeUnit.SECONDS);
@@ -74,13 +61,6 @@ public class ChannelHandler {
     }
     
     synchronized protected void processUpdate(UpdateExchangeStateItem o) {
-        
-        if (!marketName.equals(o.marketName)) {
-            LOG.warn("Bittrex wrong pair-handler mapping2!!! marketName: " + marketName + ", update for: " + o.marketName);
-            this.state = WebsocketChannelState.ERROR;
-            return;
-        }
-        
         orderBook = null;
         if (state == WebsocketChannelState.SYNCING) {
             queue.add(o);

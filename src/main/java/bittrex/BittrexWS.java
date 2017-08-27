@@ -80,7 +80,6 @@ public class BittrexWS {
               @SuppressWarnings("unused")
               public void updateSummaryState(Object o) {
                   // ignore it for now
-                  //System.out.println("updateSummaryState! " + o.getClass() + ": " + o);
               }
               
               @SuppressWarnings("unused")
@@ -181,11 +180,6 @@ public class BittrexWS {
         final String marketName = toBittrexMarket(pair);
         ChannelHandler handler = handlers.get(marketName);
         if (handler != null) {
-            
-            if (!handler.getPair().equals(pair)) {
-                LOG.warn("Bittrex wrong pair-handler mapping!!! pair: " + pair + ", handler: " + handler.getPair());
-            }
-            
             return handler;
         }
         
@@ -241,5 +235,4 @@ public class BittrexWS {
     private static enum WebsocketState {
         CONNECTED, CONNECTING, ERROR, DISCONNECTED;
     }
-
 }
