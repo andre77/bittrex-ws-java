@@ -14,12 +14,10 @@ public class Main {
         BittrexWS ws = new BittrexWS();
         
         BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
-        System.out.println("type 'o XXX/YYY' to fetch order book.");
-        System.out.println("type 't XXX/YYY' to fetch last trades.");
-        System.out.println("where XXX: base currency, YYY: counter currency, i.e. BTC/USDT -> bittrex market USDT-BTC");
+       
         do {
             String readLine = br.readLine();
-            if (readLine.length() > 0) {
+            if (readLine != null && readLine.length() > 0) {
                 try {
                     switch (readLine.charAt(0)) {
                     case 'o':
@@ -28,14 +26,24 @@ public class Main {
                     case 't':
                         System.out.println("Trades: \n\t" + ws.getTrades(new CurrencyPair(readLine.substring(2))).stream().map(Trade::toString).collect(Collectors.joining("\n\t")));    
                         break;
+                    
                     default:
+                        help();
                         break;
                     }
                     
                 } catch (Throwable t) {
                     System.out.println("failed " + t.getMessage());
                 }
+            } else {
+                help();
             }
         } while(true);
+    }
+
+    private static void help() {
+        System.out.println("type 'o XXX/YYY' to fetch order book.");
+        System.out.println("type 't XXX/YYY' to fetch last trades.");
+        System.out.println("where XXX: base currency, YYY: counter currency, i.e. BTC/USDT -> bittrex market USDT-BTC");
     }
 }

@@ -31,6 +31,20 @@ repositories {
   mavenCentral()
 }
 
+jar {
+  manifest {
+    attributes(
+      'Class-Path': configurations.compile.collect { it.getName() }.join(' '),
+      'Main-Class': 'Main'
+    )
+  }
+}
+task myRun(type: JavaExec) {
+    classpath sourceSets.main.runtimeClasspath
+    main = "Main"
+    standardInput = System.in
+}
+
 // Gradle Wrapper
 task wrapper(type: Wrapper, group: 'Gradle') {
   gradleVersion = '3.5'
