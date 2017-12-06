@@ -38,6 +38,17 @@ public class RingBuffer<T> {
         }
         return l;
     }
+    
+    public T last() {
+        if (isEmpty()) {
+            return null;
+        }
+        int idx = head - 1;
+        if (idx < 0) {
+            idx = 0;
+        }
+        return data[idx];
+    }
 
     public boolean isEmpty() {
         return size == 0;

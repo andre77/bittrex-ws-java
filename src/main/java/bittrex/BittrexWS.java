@@ -1,15 +1,21 @@
 package bittrex;
 
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import microsoft.aspnet.signalr.client.ConnectionState;
 import microsoft.aspnet.signalr.client.LogLevel;
@@ -17,9 +23,6 @@ import microsoft.aspnet.signalr.client.SignalRFuture;
 import microsoft.aspnet.signalr.client.hubs.HubConnection;
 import microsoft.aspnet.signalr.client.hubs.HubProxy;
 import microsoft.aspnet.signalr.client.transport.WebsocketTransport;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 
 public class BittrexWS {
@@ -41,13 +44,13 @@ public class BittrexWS {
     private HubProxy proxy;
     private Map<String, ChannelHandler> handlers = new ConcurrentHashMap<>();
     
-    Map<CurrencyPair, Object> locks = new ConcurrentHashMap<>();
+    Map<CurrencyPair, Set<Consumer<Trade>>> tradeListener = new ConcurrentHashMap<>();
 
     private Date connectionTimestamp;
     private WebsocketState state = WebsocketState.DISCONNECTED;
     
     public BittrexWS() {
-        //reconnect();
+        reconnect0();
     }
     
     
@@ -61,15 +64,17 @@ public class BittrexWS {
         }
         connectionTimestamp = null;
         state = WebsocketState.CONNECTING;
+        LOG.debug("Going to connect web socket...");
         connection = new HubConnection(DEFAULT_SERVER_URL, null, true, logger);
         connection.error(error -> LOG.warn("There was an error communicating with the server.", error));
         connection.connected(() -> {
             LOG.info("Connecton started");
             connectionTimestamp = new Date();
             state = WebsocketState.CONNECTED;
+            LOG.debug("Web socket connected.");
         });
         connection.closed(() -> {
-            LOG.info("Connecton closed");
+            LOG.info("Web socket connecton closed");
             connectionTimestamp = null;
             state = WebsocketState.DISCONNECTED;
         });
@@ -102,7 +107,7 @@ public class BittrexWS {
         start.get();
     }
 
-    private <T> T useHandler(CurrencyPair pair, Function<ChannelHandler, T> f) throws Exception {
+    private <T> T useHandler(CurrencyPair pair, Function<ChannelHandler, T> f) {
         if (connection == null || connection.getState() != ConnectionState.Connected) {
             reconnect0();
         }
@@ -113,19 +118,9 @@ public class BittrexWS {
             throw new RuntimeException("Bittrex WebSocket is not connected, current state: " + connection.getState());
         }
         
-        Object lock = locks.get(pair);
-        if (lock == null) {
-            synchronized (locks) {
-                lock = locks.get(pair);
-                if (lock == null) {
-                    lock = new Object();
-                    locks.put(pair, lock);
-                }
-            }
-        }
         try {
             ChannelHandler ch;
-            synchronized (lock) {
+            synchronized (pair.toString().intern()) {
                 ch = subscribe(pair);
             }
             return f.apply(ch);
@@ -138,21 +133,49 @@ public class BittrexWS {
                 handlers.remove(toBittrexMarket(pair));
             }
             throw e;
-        } catch (Throwable t) {
+        } catch (RuntimeException t) {
             LOG.warn("Error " + pair, t);
             throw t;
         }
     }
     
-    public OrderBook getOrderBook(CurrencyPair pair) throws Exception {
+    public OrderBook getOrderBook(CurrencyPair pair) {
         return useHandler(pair, h -> {
             OrderBook result = h.getOrderBook();
             return result;
         });
     }
     
-    public List<Trade> getTrades(CurrencyPair pair) throws Exception {
+    public List<Trade> getTrades(CurrencyPair pair) {
         return useHandler(pair, h -> h.getTrades());
+    }
+    
+    public void addTradesListener(CurrencyPair pair, Consumer<Trade> c) {
+        synchronized (tradeListener) {
+            Set<Consumer<Trade>> set = tradeListener.get(pair);
+            if (set == null) {
+                set = new HashSet<>();
+                tradeListener.put(pair, set);
+            }
+            set.add(c);
+        }
+        try {
+            useHandler(pair, h -> null);
+        } catch (Exception e) {
+            
+        }
+    }
+    public void removeTradesListener(CurrencyPair pair, Consumer<Trade> c) {
+        synchronized (tradeListener) {
+            Set<Consumer<Trade>> set = tradeListener.get(pair);
+            if (set == null) {
+                return;
+            }
+            set.remove(c);
+            if (set.isEmpty()) {
+                tradeListener.remove(pair);
+            }
+        }
     }
     
     private void reconnect0() {
@@ -176,14 +199,20 @@ public class BittrexWS {
         }
     }
     
-    private ChannelHandler subscribe(final CurrencyPair pair) throws InterruptedException, ExecutionException {
+    private ChannelHandler subscribe(final CurrencyPair pair) {
         final String marketName = toBittrexMarket(pair);
         ChannelHandler handler = handlers.get(marketName);
         if (handler != null) {
             return handler;
         }
         
-        final ChannelHandler h = new ChannelHandler(marketName, pair, proxy);
+        synchronized (tradeListener) {
+            if (!tradeListener.containsKey(pair)) {
+                tradeListener.put(pair, new HashSet<>());
+            }
+        }
+        
+        final ChannelHandler h = new ChannelHandler(marketName, pair, proxy, tradeListener.get(pair));
         handlers.put(marketName, h);
         
         SignalRFuture<Void> updates;
@@ -204,6 +233,9 @@ public class BittrexWS {
             handlers.remove(marketName);
             LOG.warn("Could not subscribe for exchange deltas " + marketName + " (timeout).", err);
             throw new RuntimeException("Could not subscribe for exchange deltas " + marketName + " (timeout).", err);
+        } catch (InterruptedException | ExecutionException e) {
+            LOG.warn("Could not subscribe for exchange deltas " + marketName + ".", e);
+            throw new RuntimeException("Could not subscribe for exchange deltas " + marketName + ".", e);
         }
         
         h.fetchState();

@@ -4,16 +4,18 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
-
-import microsoft.aspnet.signalr.client.SignalRFuture;
-import microsoft.aspnet.signalr.client.hubs.HubProxy;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import microsoft.aspnet.signalr.client.SignalRFuture;
+import microsoft.aspnet.signalr.client.hubs.HubProxy;
 
 public class ChannelHandler {
     
@@ -36,11 +38,13 @@ public class ChannelHandler {
     
     private final List<UpdateExchangeStateItem> queue = new ArrayList<>();
     private final RingBuffer<Trade> tradeRing = new RingBuffer<Trade>(1000);
+    private final Set<Consumer<Trade>> tradeListener;
     
-    public ChannelHandler(String marketName, CurrencyPair pair, HubProxy proxy) {
+    public ChannelHandler(String marketName, CurrencyPair pair, HubProxy proxy, Set<Consumer<Trade>> tradeListener) {
         this.pair = pair;
         this.proxy = proxy;
         this.marketName = marketName;
+        this.tradeListener = tradeListener;
     }
     
     protected void fetchState() {
@@ -101,8 +105,20 @@ public class ChannelHandler {
         Stream.of(o.sells).forEach(u -> ordersProcessor.accept(u, asks));
         Stream.of(o.fills).forEach(u -> {
             OrderType ordeType =  u.orderType.equals("SELL") ? OrderType.ASK : OrderType.BID;
-            tradeRing.add(new Trade(ordeType, u.quantity, pair, u.rate, u.timeStamp, null));
+            Trade t = new Trade(ordeType, u.quantity, pair, u.rate, u.timeStamp, null);
+            tradeRing.add(t);
+            informListener(t);
         });
+        
+      
+    }
+    
+    private void informListener(Trade trade) {
+        try {
+            tradeListener.parallelStream().forEach(c -> c.accept(trade));
+        } catch (Throwable t) {
+            LOG.warn("Error executing listeners.", t);
+        }
     }
 
     private synchronized void processSnapShot(QueryExchangeState v) {
@@ -120,6 +136,12 @@ public class ChannelHandler {
             OrderType ordeType =  f.orderType.equals("SELL") ? OrderType.ASK : OrderType.BID;
             tradeRing.add(new Trade(ordeType, f.quantity, pair, f.price, f.timeStamp, id));
         });
+        
+        // inform trde listeners about the very last trade
+        Trade last = tradeRing.last();
+        if (last != null) {
+            informListener(last);
+        }
         
         state = WebsocketChannelState.SYNCED;
         heartbeat = System.currentTimeMillis();
